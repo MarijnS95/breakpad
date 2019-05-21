@@ -48,6 +48,7 @@
 #include "google_breakpad/common/breakpad_types.h"
 #include "google_breakpad/processor/code_modules.h"
 #include "google_breakpad/processor/memory_region.h"
+#include "google_breakpad/processor/minidump.h"
 #include "google_breakpad/processor/stack_frame_symbolizer.h"
 
 namespace google_breakpad {
@@ -87,6 +88,7 @@ class Stackwalker {
      const SystemInfo* system_info,
      DumpContext* context,
      MemoryRegion* memory,
+     MinidumpMemoryList* memory_list,
      const CodeModules* modules,
      const CodeModules* unloaded_modules,
      StackFrameSymbolizer* resolver_helper);

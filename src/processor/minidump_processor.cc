@@ -329,6 +329,7 @@ ProcessResult MinidumpProcessor::Process(
         Stackwalker::StackwalkerForCPU(process_state->system_info(),
                                        context,
                                        thread_memory,
+                                       memory_list,
                                        process_state->modules_,
                                        process_state->unloaded_modules_,
                                        frame_symbolizer_));
