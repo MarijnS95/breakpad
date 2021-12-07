@@ -141,7 +141,7 @@ void InstallAlternateStackLocked() {
   // SIGSTKSZ may be too small to prevent the signal handlers from overrunning
   // the alternative stack. Ensure that the size of the alternative stack is
   // large enough.
-  const unsigned kSigStackSize = std::max<unsigned>(16384, SIGSTKSZ);
+  const unsigned int kSigStackSize = std::max<unsigned int>(16384, SIGSTKSZ);
 
   // Only set an alternative stack if there isn't already one, or if the current
   // one is too small.
