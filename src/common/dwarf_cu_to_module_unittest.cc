@@ -1,5 +1,4 @@
-// Copyright (c) 2010 Google Inc.
-// All rights reserved.
+// Copyright 2010 Google LLC
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -11,7 +10,7 @@
 // copyright notice, this list of conditions and the following disclaimer
 // in the documentation and/or other materials provided with the
 // distribution.
-//     * Neither the name of Google Inc. nor the names of its
+//     * Neither the name of Google LLC nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
 //
@@ -30,6 +29,10 @@
 // Original author: Jim Blandy <jimb@mozilla.com> <jimb@red-bean.com>
 
 // dwarf_cu_to_module.cc: Unit tests for google_breakpad::DwarfCUToModule.
+
+#ifdef HAVE_CONFIG_H
+#include <config.h>  // Must come first
+#endif
 
 #include <stdint.h>
 
@@ -67,12 +70,13 @@ using ::testing::ValuesIn;
 class MockLineToModuleHandler: public DwarfCUToModule::LineToModuleHandler {
  public:
   MOCK_METHOD1(StartCompilationUnit, void(const string& compilation_dir));
-  MOCK_METHOD8(ReadProgram, void(const uint8_t* program, uint64_t length,
+  MOCK_METHOD9(ReadProgram, void(const uint8_t* program, uint64_t length,
                                  const uint8_t* string_section,
                                  uint64_t string_section_length,
                                  const uint8_t* line_string_section,
                                  uint64_t line_string_section_length,
-                                 Module* module, vector<Module::Line>* lines));
+                                 Module* module, vector<Module::Line>* lines,
+                                 std::map<uint32_t, Module::File*>* files));
 };
 
 class MockWarningReporter: public DwarfCUToModule::WarningReporter {
@@ -122,7 +126,8 @@ class CUFixtureBase {
                     uint64_t string_section_length,
                     const uint8_t* line_string_section,
                     uint64_t line_string_section_length,
-                    Module *module, vector<Module::Line>* lines) {
+                    Module *module, vector<Module::Line>* lines, 
+                    std::map<uint32_t, Module::File*>* files) {
       lines->insert(lines->end(), lines_->begin(), lines_->end());
     }
    private:
@@ -155,7 +160,7 @@ class CUFixtureBase {
     // By default, expect the line program reader not to be invoked. We
     // may override this in StartCU.
     EXPECT_CALL(line_reader_, StartCompilationUnit(_)).Times(0);
-    EXPECT_CALL(line_reader_, ReadProgram(_,_,_,_,_,_,_,_)).Times(0);
+    EXPECT_CALL(line_reader_, ReadProgram(_,_,_,_,_,_,_,_,_)).Times(0);
 
     // The handler will consult this section map to decide what to
     // pass to our line reader.
@@ -262,6 +267,10 @@ class CUFixtureBase {
   void TestFunction(int i, const string& name,
                     Module::Address address, Module::Address size);
 
+  // Test that the I'th function (ordered by address) in the module
+  // this.module_ has the given prefer_extern_name.
+  void TestFunctionPreferExternName(int i, bool prefer_extern_name);
+
   // Test that the number of source lines owned by the I'th function
   // in the module this.module_ is equal to EXPECTED.
   void TestLineCount(int i, size_t expected);
@@ -341,7 +350,7 @@ void CUFixtureBase::StartCU() {
     EXPECT_CALL(line_reader_,
                 ReadProgram(&dummy_line_program_[0], dummy_line_size_,
                             _,_,_,_,
-                            &module_, _))
+                            &module_, _,_))
         .Times(AtMost(1))
         .WillOnce(DoAll(Invoke(appender_), Return()));
   ASSERT_TRUE(root_handler_
@@ -610,6 +619,15 @@ void CUFixtureBase::TestFunction(int i, const string& name,
   EXPECT_EQ(0U,      function->parameter_size);
 }
 
+void CUFixtureBase::TestFunctionPreferExternName(int i,
+                                                 bool prefer_extern_name) {
+  FillFunctions();
+  ASSERT_LT((size_t)i, functions_.size());
+
+  Module::Function* function = functions_[i];
+  EXPECT_EQ(prefer_extern_name, function->prefer_extern_name);
+}
+
 void CUFixtureBase::TestLineCount(int i, size_t expected) {
   FillFunctions();
   ASSERT_LT((size_t) i, functions_.size());
@@ -779,9 +797,6 @@ TEST_F(SimpleCU, AbstractOriginNotInlined) {
 }
 
 TEST_F(SimpleCU, UnknownAbstractOrigin) {
-  EXPECT_CALL(reporter_, UnknownAbstractOrigin(_, 1ULL)).WillOnce(Return());
-  EXPECT_CALL(reporter_, UnnamedFunction(0x11c70f94c6e87ccdLL))
-    .WillOnce(Return());
   PushLine(0x1758a0f941b71efbULL, 0x1cf154f1f545e146ULL, "line-file", 75173118);
 
   StartCU();
@@ -797,8 +812,6 @@ TEST_F(SimpleCU, UnknownAbstractOrigin) {
 }
 
 TEST_F(SimpleCU, UnnamedFunction) {
-  EXPECT_CALL(reporter_, UnnamedFunction(0xe34797c7e68590a8LL))
-    .WillOnce(Return());
   PushLine(0x72b80e41a0ac1d40ULL, 0x537174f231ee181cULL, "line-file", 14044850);
 
   StartCU();
@@ -1266,12 +1279,12 @@ TEST_F(Specifications, MangledNameRust) {
 
   TestFunctionCount(1);
   TestFunction(0,
-#ifndef HAVE_RUST_DEMANGLE
+#ifndef HAVE_RUSTC_DEMANGLE
                // Rust mangled names should pass through untouched if not
-               // using rust-demangle.
+               // using rustc-demangle.
                kName,
 #else
-               // If rust-demangle is available this should be properly
+               // If rustc-demangle is available this should be properly
                // demangled.
                "rustc_demangle::demangle",
 #endif
@@ -1517,7 +1530,7 @@ TEST_F(Specifications, InterCU) {
   DwarfCUToModule::FileContext fc("dwarf-filename", &m, true);
   EXPECT_CALL(reporter_, UncoveredFunction(_)).WillOnce(Return());
   MockLineToModuleHandler lr;
-  EXPECT_CALL(lr, ReadProgram(_,_,_,_,_,_,_,_)).Times(0);
+  EXPECT_CALL(lr, ReadProgram(_,_,_,_,_,_,_,_,_)).Times(0);
 
   // Kludge: satisfy reporter_'s expectation.
   reporter_.SetCUName("compilation-unit-name");
@@ -1568,7 +1581,7 @@ TEST_F(Specifications, InterCU) {
   vector<Module::Function*> functions;
   m.GetFunctions(&functions, functions.end());
   EXPECT_EQ(1U, functions.size());
-  EXPECT_STREQ("class_A::member_func_B", functions[0]->name.c_str());
+  EXPECT_STREQ("class_A::member_func_B", functions[0]->name.str().c_str());
 }
 
 TEST_F(Specifications, UnhandledInterCU) {
@@ -1576,7 +1589,7 @@ TEST_F(Specifications, UnhandledInterCU) {
   DwarfCUToModule::FileContext fc("dwarf-filename", &m, false);
   EXPECT_CALL(reporter_, UncoveredFunction(_)).WillOnce(Return());
   MockLineToModuleHandler lr;
-  EXPECT_CALL(lr, ReadProgram(_,_,_,_,_,_,_,_)).Times(0);
+  EXPECT_CALL(lr, ReadProgram(_,_,_,_,_,_,_,_,_)).Times(0);
 
   // Kludge: satisfy reporter_'s expectation.
   reporter_.SetCUName("compilation-unit-name");
@@ -1620,7 +1633,6 @@ TEST_F(Specifications, UnhandledInterCU) {
                                            google_breakpad::DW_TAG_compile_unit));
     ASSERT_TRUE(root3_handler.EndAttributes());
     EXPECT_CALL(reporter_, UnhandledInterCUReference(_, _)).Times(1);
-    EXPECT_CALL(reporter_, UnnamedFunction(_)).Times(1);
     DefinitionDIE(&root3_handler, google_breakpad::DW_TAG_subprogram,
                   0xb01fef8b380bd1a2ULL, "",
                   0x2618f00a1a711e53ULL, 0x4fd94b76d7c2caf5ULL);
@@ -1630,8 +1642,6 @@ TEST_F(Specifications, UnhandledInterCU) {
 
 TEST_F(Specifications, BadOffset) {
   PushLine(0xa0277efd7ce83771ULL, 0x149554a184c730c1ULL, "line-file", 56636272);
-  EXPECT_CALL(reporter_, UnknownSpecification(_, 0x2be953efa6f9a996ULL))
-    .WillOnce(Return());
 
   StartCU();
   DeclarationDIE(&root_handler_, 0xefd7f7752c27b7e4ULL,
